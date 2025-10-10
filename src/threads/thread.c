@@ -200,6 +200,9 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  if (t->priority > thread_current()->priority){
+    thread_yield();
+  }
 
   return tid;
 }
@@ -237,8 +240,17 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+
+  list_insert_ordered (&ready_list, &t->elem, thread_comparison, NULL);
   t->status = THREAD_READY;
+
+  if (thread_current()->priority < t->priority){
+    if (intr_context()){
+      intr_yield_on_return();
+    }
+  } else{
+    thread_yield()
+  }
   intr_set_level (old_level);
 }
 
@@ -308,7 +320,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered (&ready_list, &cur->elem, thread_comparison, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -335,7 +347,21 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  enum intr_level old_level = intr_disable();
+  struct thread *cur = thread_current ();
+
+  cur->base_priority = new_priority; 
+  
+  thread_refresh_priority (cur);
+
+
+  if (!list_empty(&ready_list)){
+    struct thread *front = list_entry(list_front(&ready_list), struct thread, elem);
+    if (front->priority > thread_current()->priority){
+        thread_yield();
+      }
+    }
+  intr_set_level(old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -462,6 +488,10 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+
+  t->base_priority = priority;
+  list_init(&t->held_locks);
+  t->waiting_on = NULL;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
@@ -524,6 +554,55 @@ thread_schedule_tail (struct thread *prev)
 
   /* Start new time slice. */
   thread_ticks = 0;
+  
+  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
+  {
+    ASSERT (prev != cur);
+    palloc_free_page (prev);
+  }
+
+}
+static int
+thread_compute_effective_priority (struct thread *t)
+{
+  int eff = t->base_priority;
+  struct list_elem *e;
+
+  for (e = list_begin (&t->held_locks);
+       e != list_end (&t->held_locks);
+       e = list_next (e))
+  {
+    struct lock *lk = list_entry (e, struct lock, elem);
+    if (!list_empty (&lk->semaphore.waiters)) {
+      struct thread *w =
+        list_entry (list_front (&lk->semaphore.waiters), struct thread, elem);
+      if (w->priority > eff)
+        eff = w->priority;
+    }
+  }
+  return eff;
+}
+
+void
+thread_refresh_priority(struct thread *t) {
+  t->priority = thread_compute_effective_priority(t);
+}
+
+#define DONATION_DEPTH_LIMIT 8
+void
+thread_donate_chain(struct thread *donor) {
+  int depth = 0;
+  struct lock *lk = donor->waiting_on;
+
+  while (lk != NULL && lk->holder != NULL && depth < DONATION_DEPTH_LIMIT) {
+    struct thread *holder = lk->holder;
+    if (holder->priority < donor->priority)
+      holder->priority = donor->priority;
+    donor = holder;
+    lk = holder->waiting_on;
+    depth++;
+  }
+}
 
 #ifdef USERPROG
   /* Activate the new address space. */
@@ -535,12 +614,7 @@ thread_schedule_tail (struct thread *prev)
      pull out the rug under itself.  (We don't free
      initial_thread because its memory was not obtained via
      palloc().) */
-  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
-    {
-      ASSERT (prev != cur);
-      palloc_free_page (prev);
-    }
-}
+
 
 /* Schedules a new process.  At entry, interrupts must be off and
    the running process's state must have been changed from
@@ -563,6 +637,15 @@ schedule (void)
   if (cur != next)
     prev = switch_threads (cur, next);
   thread_schedule_tail (prev);
+}
+
+/* comparing priority of two threads in the addr of one elem in the struct elem, then get the whole struct by list_entry and points to priority */
+bool 
+thread_comparison(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  const struct thread *ta = list_entry(a, struct thread, elem);
+  const struct thread *tb = list_entry(b, struct thread, elem);
+  return ta->priority > tb->priority;
 }
 
 /* Returns a tid to use for a new thread. */
