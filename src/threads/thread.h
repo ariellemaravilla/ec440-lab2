@@ -93,9 +93,13 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-    int base_priority;
-    struct list held_locks;
-    struct lock *waiting_on;
+    /* Fields for MLFQS scheduler. */
+    int nice;                           /* Niceness value. */
+    int recent_cpu;                     /* Recent CPU time (fixed-point). */
+
+    /* Fields for alarm clock (Task 1). */
+    int64_t wake_tick;                  /* Time to wake up for timer_sleep. */
+    struct list_elem sleep_elem;        /* List element for sleeping threads. */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -104,10 +108,6 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-
-    /* New Fields (Arielle) */
-    int64_t wake_tick;
-    struct list_elem sleep_elem;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -140,15 +140,10 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
-void thread_refresh_priority(struct thread *t);
-void thread_donate_chain(struct thread *donor);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
-bool thread_comparison(const struct list_elem *a, const struct list_elem *b, void *aux);
-extern struct list ready_list;
-extern struct thread *idle_thread;
 
 #endif /* threads/thread.h */
