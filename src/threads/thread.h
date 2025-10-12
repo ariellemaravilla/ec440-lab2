@@ -104,6 +104,10 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    /* New Fields (Arielle) */
+    int64_t wake_tick;
+    struct list_elem sleep_elem;
   };
 
 /* If false (default), use round-robin scheduler.

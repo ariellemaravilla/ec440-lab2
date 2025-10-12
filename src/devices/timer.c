@@ -30,6 +30,18 @@ static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 
+/* New */
+static struct list sleeping_list; 
+
+/* New: Comparison function for ordering threads by wake_tick. */
+static bool
+wake_tick_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+  const struct thread *t1 = list_entry(a, struct thread, sleep_elem);
+  const struct thread *t2 = list_entry(b, struct thread, sleep_elem);
+  return t1->wake_tick < t2->wake_tick;
+}
+
+
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
@@ -37,6 +49,9 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+
+  // Initialize the sleeping list
+  list_init(&sleeping_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -89,12 +104,47 @@ timer_elapsed (int64_t then)
 void
 timer_sleep (int64_t ticks) 
 {
+  // My Plan (Notes):
+  // - Block thread: record when the thread should wake up, timer_interrupt() wakes it up
+  //
+  // In-depth Code Outline:
+  // - Calculate wake time
+  // - Disable intrrupts 
+  // - Record wake tick in thread
+  // - add to sleeping list (sorted)
+  // - block the thread
+  // - restore ineterrupts
+
+  int64_t wake_time = timer_ticks() + ticks;
+  enum intr_level old_level = intr_disable();
+
+  struct thread* current_thread = thread_current();
+  current_thread->wake_tick = wake_time;
+
+  list_insert_ordered(&sleeping_list, &current_thread->sleep_elem, wake_tick_less, NULL);
+
+  thread_block();
+  intr_set_level(old_level);
+}
+
+
+
+/*
+
+Original timer_sleep()
+
+void
+timer_sleep (int64_t ticks) 
+{
   int64_t start = timer_ticks ();
 
   ASSERT (intr_get_level () == INTR_ON);
   while (timer_elapsed (start) < ticks) 
     thread_yield ();
 }
+
+
+*/
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
    turned on. */
@@ -171,7 +221,20 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
-  thread_tick ();
+  thread_tick();
+
+  int64_t current_time = timer_ticks();
+
+  // Check sleep list to see if earliest sleeper's wake_tick has arrived (if yes: pop)
+  while(!list_empty(&sleeping_list)) {
+    struct list_elem *e = list_front(&sleeping_list);
+    struct thread *t = list_entry(e, struct thread, sleep_elem);
+
+    if (t->wake_tick > current_time) break;
+
+    list_pop_front(&sleeping_list);
+    thread_unblock(t);
+  }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
