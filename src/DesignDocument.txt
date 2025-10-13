@@ -16,11 +16,12 @@ FirstName LastName <email@domain.example>
 
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
-Citations: ChatGPT, https://web.eecs.umich.edu/~ryanph/jhu/cs318/fall22/project/pintos_9.html#SEC142
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
+Citations: ChatGPT, https://web.eecs.umich.edu/~ryanph/jhu/cs318/fall22/project/pintos_9.html#SEC142
+
 
 			     ALARM CLOCK
 			     ===========
