@@ -135,18 +135,35 @@ A potential race that can occur is if a thread changes its base priority while d
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-In thread.h, I added these fields to struct thread:
-    int nice;                      /* Thread's niceness value (-20 to 20) */
-    int recent_cpu;                /* Recent CPU time (fixed-point) */
+In thread.h, I added to struct thread:
 
-In thread.c, I added this global variable:
-    static int load_avg = 0;       /* System load average (fixed-point) */
+    int nice;
+Thread's niceness value (-20 to 20). Higher nice = lower priority.
 
-I also created a new file fixed-point.h with macros for 17.14 fixed-point
-arithmetic. This includes conversions (INT_TO_FP, FP_TO_INT), arithmetic
-operations (FP_ADD, FP_SUB, FP_MULT, FP_DIV), and mixed operations with
-integers. The format uses 17 bits for the integer part and 14 for the
-fractional part.
+    int recent_cpu;
+Recent CPU time in fixed-point. Used for priority calculations.
+
+In thread.c, I added:
+
+    static int load_avg;
+System load average in fixed-point. Tracks average number of ready threads.
+
+I made fixed-point.h for the math:
+
+    #define FP_F (1 << 14)
+Scaling factor for 17.14 fixed-point format (f = 16384).
+
+    #define INT_TO_FP(n) ((n) * FP_F)
+Converts integer to fixed-point by multiplying by f.
+
+    #define FP_TO_INT_NEAREST(x) (...)
+Converts fixed-point to integer, rounding to nearest.
+
+    #define FP_MULT(x, y) ((int)(((int64_t)(x)) * (y) / FP_F))
+Multiplies two fixed-point numbers using int64_t to prevent overflow.
+
+    #define FP_DIV(x, y) ((int)(((int64_t)(x)) * FP_F / (y)))
+Divides two fixed-point numbers using int64_t to prevent overflow.
 
 ---- ALGORITHMS ----
 
