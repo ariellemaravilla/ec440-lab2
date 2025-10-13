@@ -190,25 +190,17 @@ ticks   A   B   C   A   B   C   to run
 >> in the table uncertain?  If so, what rule did you use to resolve
 >> them?  Does this match the behavior of your scheduler?
 
-The main ambiguity was what happens when multiple threads have the same
-priority. I used round-robin ordering for ties - if threads have equal
-priority, I pick the one that's been waiting longest in the ready queue.
-This happens naturally with list_push_back() when inserting into ready_list.
-My scheduler matches this because I don't sort the ready list, I just append
-to it and let the highest priority thread run first.
+The main ambiguity was what happens when multiple threads have the same priority. I used round-robin ordering for ties,  if threads have equal
+priority, I pick the one that's been waiting longest in the ready queue. This happens naturally with list_push_back() when inserting into ready_list.
+My scheduler matches this because I don't sort the ready list, I just append to it and let the highest priority thread run first.
 
 >> C4: How is the way you divided the cost of scheduling between code
 >> inside and outside interrupt context likely to affect performance?
 
-I do most of the work in the timer interrupt (thread_tick), which runs
-every tick. Every tick I increment recent_cpu for the running thread.
-Every 4 ticks I recalculate all thread priorities. Every second (100 ticks)
-I update load_avg and recent_cpu for all threads. This is pretty expensive
-because I'm iterating through all threads multiple times, but it has to be
-done in interrupt context to keep the scheduler accurate. The downside is
-that with many threads, these calculations could take a while and delay
-other interrupts. If I had more time I'd try to spread the work out more or
-only update threads that are actually in the ready queue.
+I do most of the work in the timer interrupt (thread_tick), which runs every tick. Every tick I increment recent_cpu for the running thread.
+Every 4 ticks I recalculate all thread priorities. Every second (100 ticks) I update load_avg and recent_cpu for all threads and this is pretty expensive
+because I'm iterating through all threads multiple times, but it has to be done in interrupt context to keep the scheduler accurate. 
+With many threads, these calculations could take a while and delay other interrupts. 
 
 ---- RATIONALE ----
 
@@ -217,23 +209,13 @@ only update threads that are actually in the ready queue.
 >> time to work on this part of the project, how might you choose to
 >> refine or improve your design?
 
-Advantages: My implementation is pretty straightforward and follows the
-formulas from the spec exactly. Using fixed-point macros made the math
-readable and I didn't have to worry about floating-point in the kernel.
-The thread_mlfqs flag lets me cleanly switch between priority donation
-and MLFQS without breaking either scheduler.
+Advantages: My implementation is pretty straightforward and follows the formulas from the spec exactly. Using fixed-point macros made the math readable and I didn't have to worry about floating-point in the kernel.
+The thread_mlfqs flag lets me cleanly switch between priority donation and MLFQS without breaking scheduler.
 
-Disadvantages: The biggest issue is performance. I iterate through all
-threads every 4 ticks for priority updates and every 100 ticks for
-recent_cpu updates. With hundreds of threads this would be really slow.
-Also, I'm doing all this work in interrupt context which could delay
-other important interrupts.
+Disadvantages: The biggest issue is performance. I iterate through all threads every 4 ticks for priority updates and every 100 ticks for
+recent_cpu updates. With hundreds of threads this would be really slow i feel.
 
-If I had more time: I'd maintain separate ready queues for each priority
-level (like the real 4.4BSD scheduler) so I wouldn't have to search for
-the highest priority thread. I'd also try to batch the updates or only
-update threads that are actually runnable instead of every thread in the
-system.
+If I had more time I'd  separate ready queues for each priority level (like the real 4.4BSD scheduler) so I wouldn't have to search for the highest priority thread. 
 
 >> C6: The assignment explains arithmetic for fixed-point math in
 >> detail, but it leaves it open to you to implement it.  Why did you
@@ -242,22 +224,10 @@ system.
 >> type and/or a set of functions or macros to manipulate fixed-point
 >> numbers, why did you do so?  If not, why not?
 
-I created a fixed-point.h header with macros for all the operations. I went
-with macros instead of functions because they're faster (no function call
-overhead) and the operations are simple enough that inline expansion makes
-sense. I used the 17.14 format from the spec (F = 16384 = 2^14) which gives
-enough precision for the scheduler calculations without overflow issues.
+I made fixed-point.h with macros instead of functions because they're faster. I used 17.14 format (F = 16384) for enough precision without overflow. For multiply/divide I cast to int64_t temporarily to prevent overflow. 
+I made separate macros for fixed-point operations (FP_MULT, FP_DIV) versus fixed-point with integers (FP_MULT_INT, FP_DIV_INT) since they need different shifts.
 
-For multiplication and division I had to cast to int64_t temporarily to
-avoid overflow, then shift back to int. I made separate macros for
-operations between two fixed-point numbers (FP_MULT, FP_DIV) versus a
-fixed-point and an integer (FP_MULT_INT, FP_DIV_INT) because they need
-different shift amounts.
-
-The abstraction layer was really helpful because it made the formulas in
-thread.c readable - I could write "FP_DIV(recent_cpu, INT_TO_FP(4))"
-instead of dealing with raw bit shifts everywhere. It also made debugging
-easier since I could test the fixed-point operations separately.
+The abstraction made thread.c way more readable I could write "FP_DIV(recent_cpu, INT_TO_FP(4))" instead of raw bit shifts. Also made debugging easier.
 
 			   SURVEY QUESTIONS
 			   ================
