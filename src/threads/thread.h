@@ -93,7 +93,12 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-    /* Fields for MLFQS scheduler. */
+    /* Fields for priority donation (Task 2). */
+    int base_priority;                  /* Original priority before donation. */
+    struct list held_locks;             /* List of locks this thread holds. */
+    struct lock *waiting_on;            /* Lock this thread is waiting for. */
+
+    /* Fields for MLFQS scheduler (Task 3). */
     int nice;                           /* Niceness value. */
     int recent_cpu;                     /* Recent CPU time (fixed-point). */
 
@@ -141,9 +146,23 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 void thread_set_priority (int);
 
+/* Priority donation functions (Task 2). */
+void thread_refresh_priority (struct thread *t);
+void thread_donate_chain (struct thread *donor);
+bool lock_priority_less (const struct list_elem *a,
+                         const struct list_elem *b,
+                         void *aux);
+
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* Comparison function for priority ordering. */
+bool thread_comparison (const struct list_elem *a, const struct list_elem *b, void *aux);
+
+/* Exported for synch.c */
+extern struct list ready_list;
+extern struct thread *idle_thread;
 
 #endif /* threads/thread.h */

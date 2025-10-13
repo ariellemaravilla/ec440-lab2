@@ -24,14 +24,14 @@
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
-static struct list ready_list;
+struct list ready_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
 /* Idle thread. */
-static struct thread *idle_thread;
+struct thread *idle_thread;
 
 /* Initial thread, the thread running init.c:main(). */
 static struct thread *initial_thread;
@@ -88,6 +88,9 @@ static void mlfqs_recalculate_all_recent_cpu (void);
 static bool thread_priority_less (const struct list_elem *a,
                                    const struct list_elem *b,
                                    void *aux UNUSED);
+
+/* Priority donation helper functions (Task 2). */
+static void thread_update_priority (struct thread *t);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -241,6 +244,10 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  
+  /* Yield if new thread has higher priority. */
+  if (!thread_mlfqs && t->priority > thread_current ()->priority)
+    thread_yield ();
 
   return tid;
 }
@@ -379,7 +386,25 @@ thread_set_priority (int new_priority)
   if (thread_mlfqs)
     return; /* Priority is calculated by scheduler in MLFQS mode. */
   
-  thread_current ()->priority = new_priority;
+  enum intr_level old_level = intr_disable ();
+  struct thread *cur = thread_current ();
+  
+  cur->base_priority = new_priority;
+  thread_refresh_priority (cur);
+  
+  /* Yield if no longer highest priority. */
+  if (!list_empty (&ready_list))
+    {
+      struct thread *front = list_entry (list_front (&ready_list), 
+                                         struct thread, elem);
+      if (front->priority > cur->priority)
+        {
+          intr_set_level (old_level);
+          thread_yield ();
+          return;
+        }
+    }
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -533,7 +558,12 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
-  /* Initialize MLFQS fields. */
+  /* Initialize priority donation fields (Task 2). */
+  t->base_priority = priority;
+  list_init (&t->held_locks);
+  t->waiting_on = NULL;
+
+  /* Initialize MLFQS fields (Task 3). */
   if (thread_mlfqs)
     {
       if (t == initial_thread)
@@ -772,4 +802,104 @@ thread_priority_less (const struct list_elem *a,
   const struct thread *ta = list_entry (a, struct thread, elem);
   const struct thread *tb = list_entry (b, struct thread, elem);
   return ta->priority > tb->priority;
+}
+
+/* Public comparison function for use by synch.c */
+bool
+thread_comparison (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  const struct thread *ta = list_entry (a, struct thread, elem);
+  const struct thread *tb = list_entry (b, struct thread, elem);
+  return ta->priority > tb->priority;
+}
+
+/* Comparison function for lock priority (by highest waiter priority). */
+bool
+lock_priority_less (const struct list_elem *a,
+                    const struct list_elem *b,
+                    void *aux UNUSED)
+{
+  const struct lock *la = list_entry (a, struct lock, elem);
+  const struct lock *lb = list_entry (b, struct lock, elem);
+  
+  int pa = PRI_MIN;
+  int pb = PRI_MIN;
+  
+  if (!list_empty (&la->semaphore.waiters))
+    {
+      struct thread *ta = list_entry (list_front (&la->semaphore.waiters),
+                                      struct thread, elem);
+      pa = ta->priority;
+    }
+  
+  if (!list_empty (&lb->semaphore.waiters))
+    {
+      struct thread *tb = list_entry (list_front (&lb->semaphore.waiters),
+                                      struct thread, elem);
+      pb = tb->priority;
+    }
+  
+  return pa > pb;
+}
+
+/* Refresh thread's priority based on donations (Task 2). */
+void
+thread_refresh_priority (struct thread *t)
+{
+  if (thread_mlfqs)
+    return; /* Don't use priority donation in MLFQS mode. */
+  
+  enum intr_level old_level = intr_disable ();
+  
+  /* Start with base priority. */
+  int max_priority = t->base_priority;
+  
+  /* Check all held locks for higher priority waiters. */
+  if (!list_empty (&t->held_locks))
+    {
+      list_sort (&t->held_locks, lock_priority_less, NULL);
+      struct lock *front_lock = list_entry (list_front (&t->held_locks),
+                                            struct lock, elem);
+      if (!list_empty (&front_lock->semaphore.waiters))
+        {
+          struct thread *front_thread = list_entry (
+              list_front (&front_lock->semaphore.waiters),
+              struct thread, elem);
+          if (front_thread->priority > max_priority)
+            max_priority = front_thread->priority;
+        }
+    }
+  
+  t->priority = max_priority;
+  intr_set_level (old_level);
+}
+
+/* Perform priority donation chain (Task 2). */
+void
+thread_donate_chain (struct thread *donor)
+{
+  if (thread_mlfqs)
+    return; /* Don't use priority donation in MLFQS mode. */
+  
+  struct thread *t = donor;
+  int depth = 0;
+  const int MAX_DEPTH = 8;
+  
+  while (t->waiting_on != NULL && depth < MAX_DEPTH)
+    {
+      depth++;
+      struct lock *lock = t->waiting_on;
+      struct thread *holder = lock->holder;
+      
+      if (holder == NULL)
+        break;
+      
+      if (t->priority > holder->priority)
+        {
+          holder->priority = t->priority;
+          t = holder;
+        }
+      else
+        break;
+    }
 }
