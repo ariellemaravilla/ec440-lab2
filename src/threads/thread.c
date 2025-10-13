@@ -89,9 +89,6 @@ static bool thread_priority_less (const struct list_elem *a,
                                    const struct list_elem *b,
                                    void *aux UNUSED);
 
-/* Priority donation helper functions (Task 2). */
-static void thread_update_priority (struct thread *t);
-
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -164,7 +161,8 @@ thread_tick (void)
       /* Increment recent_cpu for running thread every tick. */
       mlfqs_increment_recent_cpu ();
 
-      /* Every second (TIMER_FREQ ticks), recalculate load_avg and recent_cpu for all threads. */
+      /* Every second (TIMER_FREQ ticks), recalculate load_avg 
+         and recent_cpu for all threads. */
       if (timer_ticks () % TIMER_FREQ == 0)
         {
           mlfqs_calculate_load_avg ();
@@ -465,7 +463,8 @@ int
 thread_get_recent_cpu (void) 
 {
   enum intr_level old_level = intr_disable ();
-  int result = FP_TO_INT_NEAREST (FP_MULT_INT (thread_current ()->recent_cpu, 100));
+  int recent_cpu_times_100 = FP_MULT_INT (thread_current ()->recent_cpu, 100);
+  int result = FP_TO_INT_NEAREST (recent_cpu_times_100);
   intr_set_level (old_level);
   return result;
 }
@@ -713,7 +712,8 @@ mlfqs_calculate_priority (struct thread *t)
   
   int recent_cpu_div_4 = FP_DIV_INT (t->recent_cpu, 4);
   int nice_times_2 = t->nice * 2;
-  int new_priority = PRI_MAX - FP_TO_INT_NEAREST (recent_cpu_div_4) - nice_times_2;
+  int new_priority = PRI_MAX - FP_TO_INT_NEAREST (recent_cpu_div_4) 
+                     - nice_times_2;
   
   /* Clamp priority to valid range. */
   if (new_priority < PRI_MIN)
@@ -806,7 +806,8 @@ thread_priority_less (const struct list_elem *a,
 
 /* Public comparison function for use by synch.c */
 bool
-thread_comparison (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+thread_comparison (const struct list_elem *a, const struct list_elem *b, 
+                   void *aux UNUSED)
 {
   const struct thread *ta = list_entry (a, struct thread, elem);
   const struct thread *tb = list_entry (b, struct thread, elem);
@@ -825,17 +826,20 @@ lock_priority_less (const struct list_elem *a,
   int pa = PRI_MIN;
   int pb = PRI_MIN;
   
-  if (!list_empty (&la->semaphore.waiters))
+  /* Cast away const for list operations (safe for read-only access). */
+  if (!list_empty ((struct list *) &la->semaphore.waiters))
     {
-      struct thread *ta = list_entry (list_front (&la->semaphore.waiters),
-                                      struct thread, elem);
+      struct thread *ta = list_entry (
+          list_front ((struct list *) &la->semaphore.waiters),
+          struct thread, elem);
       pa = ta->priority;
     }
   
-  if (!list_empty (&lb->semaphore.waiters))
+  if (!list_empty ((struct list *) &lb->semaphore.waiters))
     {
-      struct thread *tb = list_entry (list_front (&lb->semaphore.waiters),
-                                      struct thread, elem);
+      struct thread *tb = list_entry (
+          list_front ((struct list *) &lb->semaphore.waiters),
+          struct thread, elem);
       pb = tb->priority;
     }
   

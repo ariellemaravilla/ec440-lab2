@@ -21,7 +21,8 @@
 #define FP_TO_INT_ZERO(x) ((x) / FP_F)
 
 /* Convert fixed point x to integer (rounding to nearest) */
-#define FP_TO_INT_NEAREST(x) ((x) >= 0 ? ((x) + FP_F / 2) / FP_F : ((x) - FP_F / 2) / FP_F)
+#define FP_TO_INT_NEAREST(x) ((x) >= 0 ? ((x) + FP_F / 2) / FP_F \
+                                       : ((x) - FP_F / 2) / FP_F)
 
 /* Add two fixed point values */
 #define FP_ADD(x, y) ((x) + (y))

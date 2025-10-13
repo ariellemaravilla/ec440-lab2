@@ -159,7 +159,8 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 /* Comparison function for priority ordering. */
-bool thread_comparison (const struct list_elem *a, const struct list_elem *b, void *aux);
+bool thread_comparison (const struct list_elem *a, 
+                        const struct list_elem *b, void *aux);
 
 /* Exported for synch.c */
 extern struct list ready_list;
