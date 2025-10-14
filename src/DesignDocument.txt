@@ -10,6 +10,7 @@
 
 Leo Phung <leophung@bu.edu>
 Venessa Maduka <vemaduka@bu.edu>
+Arielle Maravilla <amaravil@bu.edu>
 FirstName LastName <email@domain.example>
 
 ---- PRELIMINARIES ----
@@ -32,26 +33,85 @@ Citations: ChatGPT, https://web.eecs.umich.edu/~ryanph/jhu/cs318/fall22/project/
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+
+In threads/thread.h:
+int64_t wake_tick;
+struct list_elem sleep_elem; 
+
+In devices/timer.c:
+static struct list sleeping_list;
+static bool wake_tick_less (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+
+Description (Purpose):
+wake_tick: Stores the system tick time when the thread should wake up from sleep.
+sleep_elem: Allows the thread to be inserted into the global sleeping list when timer_sleep() is called.
+sleeping_list: Global list maintaining all sleeping threads, sorted by wake_tick.
+wake_tick_less(): Comparison function used to insert threads in ascending order of wake_tick.
+
+
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe what happens in a call to timer_sleep(),
 >> including the effects of the timer interrupt handler.
 
+In a call to timer_sleep():
+- timer_sleep(ticks) calculates the wake-up time as current tick + ticks.
+- Interrupts are disabled to prevent race conditions while modifying shared data.
+- The thread’s wake_tick field is set to the computed wake time.
+- The thread is inserted into the global sleeping_list, kept sorted by wake_tick.
+- The thread calls thread_block() to stop running until it is reawakened.
+- timer_interrupt() runs at each tick, increments the global tick counter, and checks the front of sleeping_list.
+- Threads whose wake_tick are less than or equal to the current time are removed from the list and unblocked using thread_unblock().
+
+
+
+
 >> A3: What steps are taken to minimize the amount of time spent in
 >> the timer interrupt handler?
+
+- The sleeping_list is kept sorted by wake_tick when threads are inserted.
+- In the interrupt handler, the list is ordered such that the earliest wake time is in the front. Only the front of the list is checked, rather than scanning every sleeping thread. 
+- Once it finds a thread with a wake_tick greater than the current time, the loop breaks immediately, ensuring that the handler only performs minimal work each tick and avoids unnecessary iterations.
 
 ---- SYNCHRONIZATION ----
 
 >> A4: How are race conditions avoided when multiple threads call
 >> timer_sleep() simultaneously?
 
+Interrupts are disabled before modifying shared data (intr_disable()), creating a short section of code that only one thread can run at a time.
+
+This prevents the CPU from switching to another thread while the current one sets its wake_tick, adds itself to the sleeping_list, and calls thread_block().
+
+Because interrupts are off, no other thread or interrupt can access sleeping_list during these steps. Also, timer_ticks() safely reads the global tick by disabling and re-enabling interrupts internally.
+
+
+
 >> A5: How are race conditions avoided when a timer interrupt occurs
 >> during a call to timer_sleep()?
+
+The thread disables interrupts before changing shared data in timer_sleep(), so the timer interrupt can’t run in the middle of those updates.
+
+The timer interrupt handler itself also runs with interrupts turned off by default, meaning it can safely check and remove threads from the sleeping_list without interference.
+
+Because both timer_sleep() and timer_interrupt() only access the sleeping_list when interrupts are disabled, they never run at the same time, preventing race conditions.
+
+
+
+
 
 ---- RATIONALE ----
 
 >> A6: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
+
+
+There were two approaches that were considered before the final implementation. One idea was to have a dedicated “timer daemon” thread run in the background, waking up every few ticks to scan through sleeping threads and unblock any whose time has arrived. This avoids doing the work in the interrupt handler but the response time is less precise as threads might wake slightly late
+
+Another idea was to have each thread manage its own small queue for wake-up time and register itself with a global timer notifier. The timer interrupt then checks all threads’ wake flags individually instead of a single ordered list. This would be functionally correct but the interrupt handler must iterate over all threads (and not just sleepers), making it slower as thread count grows.
+
+So while the first alternative sacrifices efficiency for simplicity and the second sacrifices efficiency for over-complexity, the final implementation keeps all sleeping threads in a single sorted list and wakes them directly from the interrupt handler, it avoids extra context switches, minimizes per-tick work, and provides precise, immediate wake-ups without added overhead.
+
 
 			 PRIORITY SCHEDULING
 			 ===================
