@@ -18,8 +18,12 @@ void
 filesys_init (bool format) 
 {
   fs_device = block_get_role (BLOCK_FILESYS);
-  if (fs_device == NULL)
-    PANIC ("No file system device found, can't initialize file system.");
+
+  //Arielle: editted for debugging Q3, Q5
+  if (fs_device == NULL) {
+    printf("Warning: No file system device found. Skipping filesys_init().\n");
+    return;
+  }
 
   inode_init ();
   free_map_init ();
