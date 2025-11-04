@@ -17,9 +17,23 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#define MAX_ARGS 32
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+// Helper function for finding child thread
+struct find_child_aux {
+  tid_t tid;
+  struct thread *child;
+};
+
+static void find_child_func(struct thread *t, void *aux_) {
+  struct find_child_aux *aux = aux_;
+  if (t->tid == aux->tid) {
+    aux->child = t;
+  }
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -30,6 +44,7 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
+  struct thread *cur = thread_current();
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -40,29 +55,110 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  if (tid == TID_ERROR) {
+    palloc_free_page (fn_copy);
+    return TID_ERROR;
+  }
+  
+  /* Find the child thread and set up parent-child relationship */
+  struct find_child_aux aux;
+  aux.tid = tid;
+  aux.child = NULL;
+  
+  enum intr_level old_level = intr_disable();
+  thread_foreach(find_child_func, &aux);
+  
+  if (aux.child != NULL) {
+    aux.child->parent = cur;
+    list_push_back(&cur->children, &aux.child->child_elem);
+  }
+  intr_set_level(old_level);
+  
   return tid;
 }
+
+static bool
+setup_user_stack(char *argv[], int argc, void **esp)
+{
+  uint8_t *sp = (uint8_t *)(*esp);
+  char *arg_addrs[MAX_ARGS];
+
+  for (int i = argc - 1; i >= 0; --i) {
+    size_t len = strlen(argv[i]) + 1;
+    sp -= len;
+    memcpy(sp, argv[i], len);
+    arg_addrs[i] = (char *)sp;
+  }
+
+  while ((uintptr_t)sp % 4) { sp--; *sp = 0; }
+  sp -= sizeof(char *);
+  *(char **)sp = NULL;
+
+
+  for (int i = argc - 1; i >= 0; --i) {
+    sp -= sizeof(char *);
+    *(char **)sp = arg_addrs[i];
+  }
+  char **argv_user = (char **)sp;
+
+  sp -= sizeof(char **);
+  *(char ***)sp = argv_user;
+
+  sp -= sizeof(int);
+  *(int *)sp = argc;
+
+  sp -= sizeof(void *);
+  *(void **)sp = 0;
+
+  *esp = sp;
+  return true;
+}
+
+
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  char *cmdline = file_name_;
   struct intr_frame if_;
-  bool success;
+  bool success = false;
 
-  /* Initialize interrupt frame and load executable. */
+
+  char *argv[MAX_ARGS];
+  int argc = 0;
+  char *save_ptr = NULL;
+
+  for (char *tok = strtok_r(cmdline, " ", &save_ptr);
+       tok != NULL && argc < MAX_ARGS;
+       tok = strtok_r(NULL, " ", &save_ptr)) {
+    argv[argc++] = tok;
+  }
+  if (argc == 0)
+    thread_exit();                
+
+
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+
+
+  success = load (argv[0], &if_.eip, &if_.esp);
+
+  struct thread *t = thread_current();
+  t->load_success = success;
+
+  if (success) {
+    setup_user_stack(argv, argc, &if_.esp);
+  }
+
+  /* Signal parent that loading is complete */
+  sema_up(&t->exec_sema);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
+  palloc_free_page (cmdline);
   if (!success) 
     thread_exit ();
 
@@ -86,9 +182,50 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  return -1;
+  struct thread *cur = thread_current();
+  struct thread *child = NULL;
+  
+  // Find the child in the children list
+  // Need interrupts off for list operations
+  enum intr_level old_level = intr_disable();
+  struct list_elem *e;
+  for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
+    struct thread *t = list_entry(e, struct thread, child_elem);
+    if (t->tid == child_tid) {
+      child = t;
+      break;
+    }
+  }
+  
+  // Check if child_tid is a direct child
+  if (child == NULL) {
+    intr_set_level(old_level);
+    return -1;
+  }
+  
+  // Check if already waited
+  if (child->waited) {
+    intr_set_level(old_level);
+    return -1;
+  }
+  
+  // Mark as waited
+  child->waited = true;
+  
+  // Remove from children list before waiting
+  list_remove(&child->child_elem);
+  intr_set_level(old_level);
+  
+  // Wait for child to exit (this may block, so interrupts should be enabled)
+  sema_down(&child->wait_sema);
+  
+  // Get exit status (child may have exited, so we need to be careful)
+  // The child thread should still be valid since we're waiting on its semaphore
+  int exit_status = child->exit_status;
+  
+  return exit_status;
 }
 
 /* Free the current process's resources. */
@@ -96,6 +233,23 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
+  printf("%s: exit(%d)\n", cur->name, cur->exit_status);  // required by tests
+  
+  // Close all file descriptors
+  // Note: We don't use filesys_lock here because this is called during
+  // thread destruction and we want to avoid deadlocks
+  for (int i = 0; i < 128; i++) {
+    if (cur->fd_table[i] != NULL) {
+      file_close(cur->fd_table[i]);
+      cur->fd_table[i] = NULL;
+    }
+  }
+  
+  // Signal waiting parent if any
+  if (cur->parent != NULL) {
+    sema_up(&cur->wait_sema);
+  }
+  
   uint32_t *pd;
 
   /* Destroy the current process's page directory and switch back

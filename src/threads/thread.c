@@ -278,17 +278,14 @@ thread_tid (void)
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
-thread_exit (void) 
+thread_exit (void)
 {
   ASSERT (!intr_context ());
-
 #ifdef USERPROG
-  process_exit ();
+  if (thread_current()->pagedir != NULL) {   // only user processes
+    process_exit ();
+  }
 #endif
-
-  /* Remove thread from all threads list, set our status to dying,
-     and schedule another process.  That process will destroy us
-     when it calls thread_schedule_tail(). */
   intr_disable ();
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
@@ -463,6 +460,19 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  
+  #ifdef USERPROG
+    t->exit_status = -1;
+    t->parent = NULL;
+    list_init(&t->children);
+    sema_init(&t->exec_sema, 0);
+    sema_init(&t->wait_sema, 0);
+    t->load_success = false;
+    t->waited = false;
+    for (int i = 0; i < 128; i++) {
+      t->fd_table[i] = NULL;
+    }
+  #endif 
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
