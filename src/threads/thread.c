@@ -225,6 +225,11 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
+#ifdef USERPROG
+  /* Add to parent's children list */
+  list_push_back (&thread_current ()->children, &t->child_elem);
+#endif
+
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
@@ -580,6 +585,22 @@ init_thread (struct thread *t, const char *name, int priority)
       /* Calculate initial priority for MLFQS. */
       mlfqs_calculate_priority (t);
     }
+
+#ifdef USERPROG
+  /* Initialize user program fields. */
+  int i;
+  for (i = 0; i < 128; i++)
+    t->fd_table[i] = NULL;
+  t->next_fd = 2;  /* 0 = STDIN, 1 = STDOUT */
+  t->exit_status = -1;
+  list_init (&t->children);
+  sema_init (&t->wait_sema, 0);
+  sema_init (&t->load_sema, 0);
+  sema_init (&t->dead_sema, 0);
+  t->load_success = false;
+  t->parent = running_thread ();
+  t->waited_on = false;
+#endif
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

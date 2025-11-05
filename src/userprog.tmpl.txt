@@ -1,0 +1,240 @@
+		     +--------------------------+
+       	       	    |	EC 440		|
+		     | PROJECT 2: USER PROGRAMS	|
+		     | 	   DESIGN DOCUMENT     	|
+		     +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Leo Phung <leophung@bu.edu>
+Venessa Maduka <vemaduka@bu.edu>
+Arielle Maravilla <amaravil@bu.edu>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			   ARGUMENT PASSING
+			   ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+In threads/thread.h (per-process state I used):
+- struct file *fd_table[128];  // Per-process open files by fd.
+- int next_fd;                  // Next fd to hand out (starts at 2).
+- int exit_status;              // Child’s exit code for wait().
+- struct list children;         // My child processes.
+- struct list_elem child_elem;  // Link to parent’s children list.
+- struct semaphore wait_sema;   // Parent blocks here in wait().
+- struct semaphore load_sema;   // Parent blocks here in exec().
+- struct semaphore dead_sema;   // Keeps child around until parent collects.
+- struct thread *parent;        // Pointer to parent process.
+- bool waited_on;               // Prevents double wait.
+- struct file *executable;      // Open executable to deny writes while running.
+
+In userprog/syscall.c:
+- static struct lock filesys_lock; // Global FS lock so file syscalls are atomic.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+I parse the command line with strtok_r() to split on spaces. I stash each
+arg into a temporary array so I can push them onto the user stack in reverse
+order (so argv[0] ends up first). After that I basically do 4-byte alignment
+(pad with zeros until esp % 4 == 0), push a NULL, then push the addresses of
+each arg (again backwards), then argv, argc, and a fake return address. To
+make sure I don’t blow past the first stack page, I check esp as I go and if
+it would cross the page boundary I just fail the load.
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+strtok() keeps its state in a static/global place, which would get clobbered
+if more than one thread parses at the same time. strtok_r() keeps the state
+in a save pointer you pass in, so it’s thread-safe and doesn’t step on other
+threads.
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+
+- It keeps the kernel simpler and safer; parsing stays in user space.
+- The shell can do nicer features (globbing, env vars, quoting, pipes) before
+	exec, so programs get a clean argv and the kernel doesn’t have to do fancy
+string parsing.
+
+			     SYSTEM CALLS
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+- fd_table, next_fd: track per-process file descriptors.
+- exit_status, children, child_elem: return child status to parent.
+- wait_sema, load_sema, dead_sema: sync for wait()/exec()/teardown.
+- parent, waited_on: parent/child relationship and single-wait rule.
+// No deny-writes behavior for executables (Task 3 is out of scope).
+- executable: keep program file open and deny writes while running.
+- filesys_lock (global): serialize file syscalls across processes.
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+Each process has fd_table[128]. When I open a file, I put its struct file 
+into the next free slot (starting at 2) and return that index as the fd.
+FDs are per-process, not global. Two different processes can both have fd 3
+and that’s fine.
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+I validate every user pointer before touching it. I use a get_user()
+helper (inline asm) that safely probes a byte; if it page-faults, the
+exception path makes it return -1. validate_pointer() checks that the
+pointer is non-null, user-space, and readable. validate_buffer() walks
+the whole buffer, and validate_string() walks until the null byte.
+
+For read/write, I also special-case fd 0/1 (stdin/stdout). For files, I
+grab filesys_lock, do the I/O on the file *, then unlock. I don’t try to
+touch user memory after a validation fails; I just exit(-1).
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+ I check each byte, so worst case it’s 4096 inspections for a
+4 KB buffer, and 2 inspections for 2 bytes. Theoretically you can optimize
+by checking per-page (first/last byte per page) and cut it down a lot, but
+I kept it simple for the lab.
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+Parent calls wait(pid): I find the child in my children list, ensure we
+haven’t waited already, mark it waited_on, then sema_down() on child’s
+wait_sema. In process_exit(), the child sets exit_status and sema_up()s
+wait_sema. After the parent wakes, it grabs the status, removes the child
+from its list, and sema_up()s the child's dead_sema so the child can finish
+freeing itself.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+I front-load validation to keep the main logic readable. In the syscall
+handler, I first validate the stack pointer and all 4 bytes of each 32-bit
+argument (this fixed the boundary tests). For buffers/strings I validate
+the whole region. If anything fails, syscall_exit(-1) terminates the
+process early, before taking locks or allocating anything. Example:
+write(fd, buf, size) — I validate esp, then fd/buf/size (all 4 bytes each),
+then [buf .. buf+size). Only after that do I take filesys_lock, do the
+write, and release it.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+After thread_create(), the parent finds the child and sema_down()s on
+the child's load_sema. The child runs load(), sets the child's load_success, and
+sema_up()s load_sema. The parent wakes and returns -1 or the child tid
+based on load_success. So exec() doesn’t return too early.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+If P waits before C exits: P blocks on C’s wait_sema; C signals it in
+process_exit(). If P waits after C exits: C is already waiting to be
+collected; wait() returns immediately with the stored status.
+
+If P terminates without waiting: in C’s process_exit() I check if the
+parent is gone; then C skips waiting on dead_sema and frees itself so we
+don’t leak. The main edge case I handled was preventing double-wait with
+the waited_on flag.
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+The safe-byte probe (get_user) plus validating up front kept the syscall
+code readable and avoided mixing lots of error paths with the main logic.
+It’s not the fastest, but it’s straightforward and it passed all the tests.
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+Pros: simple array lookup, fast close-on-exit by scanning, per-process
+namespace matches Unix expectations. Cons: fixed cap (128), need to scan
+for the next free slot. For this lab, that trade-off was fine.
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+I kept tid == pid. Since Pintos user programs are single-threaded here,
+it’s the simplest thing that works. If we added multiple threads per
+process later, I’d split them.
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
