@@ -193,7 +193,14 @@ process_exit (void)
     }
 
   /* Nothing special needed for the running executable (Tasks 1–2 only). */
-
+  /* NEW Lab 2 Q5: Allow writes to the executable before exiting. */
+  if (cur->exec_file != NULL)
+    {
+      file_allow_write (cur->exec_file);
+      file_close (cur->exec_file);
+      cur->exec_file = NULL;
+    }
+  
   /* Signal parent that we have exited */
   sema_up (&cur->wait_sema);
   
@@ -340,6 +347,9 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
+  // NEW Lab 2 Q5: Deny writes to the executable while it is running 
+  file_deny_write (file);
+  t->exec_file = file;
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -423,8 +433,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
   success = true;
 
  done:
-  /* Close the file (we do not deny writes in Tasks 1–2). */
-  if (file != NULL)
+  // NEW Lab 2 Q5: Close only if load failed, keep open otherwise
+  if (!success && file != NULL)
     file_close (file);
   return success;
 }

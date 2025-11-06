@@ -121,6 +121,7 @@ struct thread
     bool load_success;                  /* Whether load was successful. */
     struct thread *parent;              /* Parent thread. */
     bool waited_on;                     /* Whether parent has waited on this thread. */
+    struct file *exec_file;             /* NEW Lab 2 Q5: Running executable */
 #endif
 
     /* Owned by thread.c. */
