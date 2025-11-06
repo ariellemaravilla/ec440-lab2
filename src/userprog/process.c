@@ -349,7 +349,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
   // NEW Lab 2 Q5: Deny writes to the executable while it is running 
   file_deny_write (file);
-  t->exec_file = file;
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -427,10 +426,14 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (!setup_stack (esp, file_name))
     goto done;
 
+
+  /* Only assign exec_file if load succeeded. */
+  t->exec_file = file;
+  success = true;
+  
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
-  success = true;
 
  done:
   // NEW Lab 2 Q5: Close only if load failed, keep open otherwise
