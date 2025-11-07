@@ -9,7 +9,7 @@
 >> Fill in the names and email addresses of your group members.
 
 Arielle Maravilla <amaravil@bu.edu>
-FirstName LastName <email@domain.example>
+Leo Phung <leophung@domain.example>
 FirstName LastName <email@domain.example>
 
 ---- PRELIMINARIES ----
