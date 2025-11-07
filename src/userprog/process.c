@@ -22,7 +22,7 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
-// Helper function for finding child thread
+// helper function for finding child thread
 struct find_child_aux {
   tid_t tid;
   struct thread *child;
@@ -60,7 +60,7 @@ process_execute (const char *file_name)
     return TID_ERROR;
   }
   
-  /* Find the child thread and set up parent-child relationship */
+  // find child thread and set up relationship 
   struct find_child_aux aux;
   aux.tid = tid;
   aux.child = NULL;
@@ -154,7 +154,7 @@ start_process (void *file_name_)
     setup_user_stack(argv, argc, &if_.esp);
   }
 
-  /* Signal parent that loading is complete */
+  // signal parent that loading complete
   sema_up(&t->exec_sema);
 
   /* If load failed, quit. */
@@ -187,8 +187,8 @@ process_wait (tid_t child_tid)
   struct thread *cur = thread_current();
   struct thread *child = NULL;
   
-  // Find the child in the children list
-  // Need interrupts off for list operations
+  // find child in list
+  // interrupts off for list ops
   enum intr_level old_level = intr_disable();
   struct list_elem *e;
   for (e = list_begin(&cur->children); e != list_end(&cur->children); e = list_next(e)) {
@@ -199,30 +199,30 @@ process_wait (tid_t child_tid)
     }
   }
   
-  // Check if child_tid is a direct child
+  // Cfeck if child_tid is a direct child
   if (child == NULL) {
     intr_set_level(old_level);
     return -1;
   }
   
-  // Check if already waited
+  // fheck if waited
   if (child->waited) {
     intr_set_level(old_level);
     return -1;
   }
   
-  // Mark as waited
+  // mark as waited
   child->waited = true;
   
-  // Remove from children list before waiting
+  // remove from children list before waiting
   list_remove(&child->child_elem);
   intr_set_level(old_level);
   
-  // Wait for child to exit (this may block, so interrupts should be enabled)
+  // wait for child to exit 
   sema_down(&child->wait_sema);
   
-  // Get exit status (child may have exited, so we need to be careful)
-  // The child thread should still be valid since we're waiting on its semaphore
+  // get exit status 
+  // child thread should still be valid
   int exit_status = child->exit_status;
   
   return exit_status;
@@ -235,9 +235,8 @@ process_exit (void)
   struct thread *cur = thread_current ();
   printf("%s: exit(%d)\n", cur->name, cur->exit_status);  // required by tests
   
-  // Close all file descriptors
-  // Note: We don't use filesys_lock here because this is called during
-  // thread destruction and we want to avoid deadlocks
+  // close all file descriptors
+  
   for (int i = 0; i < 128; i++) {
     if (cur->fd_table[i] != NULL) {
       file_close(cur->fd_table[i]);
@@ -245,7 +244,7 @@ process_exit (void)
     }
   }
   
-  // Signal waiting parent if any
+  // signal waiting parent 
   if (cur->parent != NULL) {
     sema_up(&cur->wait_sema);
   }

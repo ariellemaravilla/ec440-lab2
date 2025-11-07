@@ -101,14 +101,14 @@ struct thread
    uint32_t *pagedir;                  /* Page directory. */
    
    int exit_status;
-   struct thread *parent;              /* Parent process. */
-   struct list children;               /* List of child processes. */
-   struct list_elem child_elem;        /* Element in parent's children list. */
-   struct semaphore exec_sema;         /* Semaphore for exec synchronization. */
-   struct semaphore wait_sema;         /* Semaphore for wait synchronization. */
-   bool load_success;                  /* Whether exec successfully loaded. */
-   bool waited;                        /* Whether parent has waited for this child. */
-   struct file *fd_table[128];         /* File descriptor table. */
+   struct thread *parent;              // parent process
+   struct list children;               //l ist of child processes
+   struct list_elem child_elem;        // element in parent's children list
+   struct semaphore exec_sema;         // semaphore for exec sync
+   struct semaphore wait_sema;         // semaphore for wait sync
+   bool load_success;                  // check if exec  loaded
+   bool waited;                        // check parent has waited for this child. 
+   struct file *fd_table[128];         // file descriptor table 
 #endif
 
     /* Owned by thread.c. */

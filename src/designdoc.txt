@@ -1,0 +1,225 @@
+		     +--------------------------+
+       	       	    |	EC 440		|
+		     | PROJECT 2: USER PROGRAMS	|
+		     | 	   DESIGN DOCUMENT     	|
+		     +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+leo phung <leophung@domain.example>
+FirstName LastName <email@domain.example>
+FirstName LastName <email@domain.example>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			   ARGUMENT PASSING
+			   ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+
+			     SYSTEM CALLS
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+parent: track parent and child relationships for wait/exit ops
+children: parent’s list of live children 
+exec_sema: blocks parent in exec() until child finishes load()
+wait_sema: lets parent sleep in wait() until child exits
+load_success: pass load status from child to parent
+waited: ensure wait() only once per child
+exit_status: child’s status line for wait()
+fd_table[128]: per-proc descriptors → struct file*
+child_elem: list linkage in parent’s children
+global:
+filesys_lock: protects filesys_*/file_* from races
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+each process gets its own fd_table. allocate_fd() is then able to return the first free
+slot that is greater than or equal 2. get_file() then idnexes into the current thread's tab;e. 
+The FDs are then unique per process and not systemwide. However, when there is a process with
+the same number, it can refer to different files in different processes. The number can
+be reused after close()
+
+
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+pointer_validation: validate_uaddr() checks each byte is user space and mapped via pagedir_get_page().
+validate_uaddr_range() go through the range by byte.
+
+safe copies: 
+-> copy_in(dst, usrc, n): kernel <- user validates each byte
+-> copy_out(udst, src, n): user <- kernel validates each dest byte
+
+read():
+--> fd==0 -> pull bytes from input_getc() into the kernel buffer, then copy_out() to the user
+--> file case -> chunked reads (<4096) under filesys_lock into a kernel buffer, then copy_out to user
+
+write(): 
+--> fd==1 -> putbuf() straight to console
+--> file case -> copy_in() from user into the kernel buffer, then it will chink file_write() under 
+filesys_lock
+
+this is able to keep the kernel from touch raw usr pointers inside the filesystem layer
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+4096B: min = max = 4096 (byte-wise today)
+2B: min = max = 2
+
+--> improve by per-page validation -> 1-2 checks for 4KB; 1 (or 2 if straddle) for 2B
+~4096x fewer in the best case
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+wait: verify child & not waited, remove from list, sema_down(wait_sema), return exit_status() 
+
+process_exit: print line, close FDs, sema_up(wait_sema), destroy pagedir 
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+* Centralize all raw user-pointer touching in small helpers: validate_uaddr*, copy_in, copy_out, get_u32, get_string
+* on any bad pointer, call sys_exit(-1) this sets exit_status and thread_exit(), the syscall bodies stay
+readable and no need for deep nesting 
+*wrap filesystem calls with filesys_lock and use kernel buffers for I/O so ner need to pass user pointers into lower layers
+*for chunked I/O allocations, these are free per-chunk -> short reads/writes or failures, break and return
+what we safely transferred 
+
+Example: sys_write(fd, buf, size)
+--> validate_uaddr_range(buf,size), loop: kernel_buf=malloc(chunk), copy_in(), file_write() under lock, 
+free(kernel_buf). Any invalid pointer triggers sys_exit(-1) immediately, any partial I/O returns bytes
+written, no leaked locks or buffers
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+* parent calls process_execute() -> gets tid
+* finds the child thread and sema_down(&child->exec_sema)
+* in child start_process()
+ -> load(), set t->load_success, optionally build the argv stack 
+ -> sema_up(&t->exec_sema) after finishing load attempt
+* parent resumes, checks child->load_process and returns new PID or -1
+
+Return from exec() happens after child finishes load(). status will be passed via child's bool_load_success
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+*P calls wait(c) before c exits:
+-> P verifies direct child and not already waited, removes C from children, then sema_down(wait_sema)
+-> C later returns process_exit() -> sema_up(wait_sema) unlocks P. P reads exit_status. FDs/pagedir closed
+by C; P holds no resources for C anymore 
+
+*P calls wait(c) after c already exited:
+-> c's process_exit() already performed sema_up()
+-> P calls wait(), finds C in children, sema_down() returns immediately, status will be returned -> no race conditions 
+
+*P terminates without waiting, before C exits
+-> C will still close its FDs and free its own addr space in process_exit() 
+
+*P terminates after C exits without waiting:
+-> child already free kernel resources --> no leaks. Waited mechanism prevents any later wait calls
+
+*special cases:
+-> double wait: rejected via waited flag
+-> Non-child TID : -1
+-> exec() load fails : parent returns -1 b/c of exec_sema and load success
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
