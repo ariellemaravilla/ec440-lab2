@@ -8,7 +8,7 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
+Arielle Maravilla <amaravil@bu.edu>
 FirstName LastName <email@domain.example>
 FirstName LastName <email@domain.example>
 
@@ -57,6 +57,9 @@ FirstName LastName <email@domain.example>
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
+ans:
+File descriptors are stored in each thread’s fd_table[] array, which serves to map integers (starting from 2) to pointers to struct file. This table is local to each thread, so file descriptors are unique only within a single process. This is what allows multiple processes to use the same descriptor numbers without conflict.
+
 ---- ALGORITHMS ----
 
 >> B3: Describe your code for reading and writing user data from the
@@ -71,6 +74,9 @@ FirstName LastName <email@domain.example>
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
+
+ans:
+We used validate_pointer(), validate_buffer(), and validate_string() helper functions to pre-check all user-supplied addresses before use. These wrappers use get_user() to safely access user memory and avoid kernel crashes. If any check fails, the process is terminated via syscall_exit(-1). This isolates error handling from the main logic and avoids deeply nested code. For example, in sys_read(), we validate both the buffer pointer and size before acquiring locks or reading from a file. Locks are always released before returning from the syscall to ensure resource cleanup.
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -92,6 +98,9 @@ FirstName LastName <email@domain.example>
 >> fails, so it cannot return before the new executable has completed
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
+
+ans:
+When a process calls exec(), the parent thread waits for the child to finish loading using a semaphore (load_sema). The child, after loading the executable in load(), sets a load_success boolean in its thread struct and signals the semaphore. The parent thread reads this value after the wait to determine success or failure and returns the result of exec() accordingly.
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
