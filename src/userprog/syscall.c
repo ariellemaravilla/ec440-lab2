@@ -57,7 +57,7 @@ get_user (const uint8_t *uaddr)
   return result;
 }
 
-/* Validates that PTR is a valid user pointer */
+/* Validates that PTR is a valid user pointer. */
 static void
 validate_pointer (const void *ptr)
 {
@@ -68,7 +68,7 @@ validate_pointer (const void *ptr)
     }
 }
 
-/* Validates that BUFFER of SIZE bytes is accessible */
+/* Validates that BUFFER of SIZE bytes is accessible. */
 static void
 validate_buffer (const void *buffer, size_t size)
 {
@@ -81,7 +81,7 @@ validate_buffer (const void *buffer, size_t size)
     }
 }
 
-/* Validates that STR is a valid string */
+/* Validates that STR is a valid string. */
 static void
 validate_string (const char *str)
 {
@@ -99,7 +99,8 @@ syscall_handler (struct intr_frame *f)
   uint32_t *esp = (uint32_t *) f->esp;
   
   validate_pointer (esp);
-  validate_pointer ((uint8_t *) esp + 3);  /* Validate all 4 bytes of the int */
+  /* Validate all 4 bytes of the int. */
+  validate_pointer ((uint8_t *) esp + 3);
   
   int syscall_number = (int) *esp;
   
@@ -207,21 +208,21 @@ syscall_handler (struct intr_frame *f)
     }
 }
 
-/* Terminates Pintos */
+/* Terminates Pintos. */
 static void
 sys_halt (void)
 {
   shutdown_power_off ();
 }
 
-/* Terminates the current user program */
+/* Terminates the current user program. */
 static void
 sys_exit (int status)
 {
   syscall_exit (status);
 }
 
-/* Helper function for exit */
+/* Helper function for exit. */
 static void
 syscall_exit (int status)
 {
@@ -231,21 +232,21 @@ syscall_exit (int status)
   thread_exit ();
 }
 
-/* Runs the executable given in cmd_line */
+/* Runs the executable given in cmd_line. */
 static int
 sys_exec (const char *cmd_line)
 {
   return process_execute (cmd_line);
 }
 
-/* Waits for a child process and returns its exit status */
+/* Waits for a child process and returns its exit status. */
 static int
 sys_wait (int pid)
 {
   return process_wait ((tid_t) pid);
 }
 
-/* Creates a new file */
+/* Creates a new file. */
 static bool
 sys_create (const char *file, unsigned initial_size)
 {
@@ -258,7 +259,7 @@ sys_create (const char *file, unsigned initial_size)
   return success;
 }
 
-/* Deletes a file */
+/* Deletes a file. */
 static bool
 sys_remove (const char *file)
 {
@@ -271,7 +272,7 @@ sys_remove (const char *file)
   return success;
 }
 
-/* Opens a file */
+/* Opens a file. */
 static int
 sys_open (const char *file)
 {
@@ -286,7 +287,7 @@ sys_open (const char *file)
   if (f == NULL)
     return -1;
   
-  /* Find available file descriptor */
+  /* Find available file descriptor. */
   for (fd = 2; fd < 128; fd++)
     {
       if (cur->fd_table[fd] == NULL)
@@ -296,14 +297,14 @@ sys_open (const char *file)
         }
     }
   
-  /* No available file descriptors */
+  /* No available file descriptors. */
   lock_acquire (&filesys_lock);
   file_close (f);
   lock_release (&filesys_lock);
   return -1;
 }
 
-/* Returns the size of a file */
+/* Returns the size of a file. */
 static int
 sys_filesize (int fd)
 {
@@ -323,7 +324,7 @@ sys_filesize (int fd)
   return size;
 }
 
-/* Reads from a file */
+/* Reads from a file. */
 static int
 sys_read (int fd, void *buffer, unsigned size)
 {
@@ -334,7 +335,7 @@ sys_read (int fd, void *buffer, unsigned size)
   
   if (fd == 0)
     {
-      /* Read from stdin */
+      /* Read from stdin. */
       for (i = 0; i < size; i++)
         ((char *) buffer)[i] = input_getc ();
       return size;
@@ -352,7 +353,7 @@ sys_read (int fd, void *buffer, unsigned size)
   return bytes_read;
 }
 
-/* Writes to a file */
+/* Writes to a file. */
 static int
 sys_write (int fd, const void *buffer, unsigned size)
 {
@@ -362,7 +363,7 @@ sys_write (int fd, const void *buffer, unsigned size)
   
   if (fd == 1)
     {
-      /* Write to stdout */
+      /* Write to stdout. */
       putbuf (buffer, size);
       return size;
     }
@@ -379,7 +380,7 @@ sys_write (int fd, const void *buffer, unsigned size)
   return bytes_written;
 }
 
-/* Changes the position in a file */
+/* Changes the position in a file. */
 static void
 sys_seek (int fd, unsigned position)
 {
@@ -396,7 +397,7 @@ sys_seek (int fd, unsigned position)
   lock_release (&filesys_lock);
 }
 
-/* Returns the position in a file */
+/* Returns the position in a file. */
 static unsigned
 sys_tell (int fd)
 {
@@ -416,7 +417,7 @@ sys_tell (int fd)
   return position;
 }
 
-/* Closes a file */
+/* Closes a file. */
 static void
 sys_close (int fd)
 {

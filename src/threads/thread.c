@@ -600,6 +600,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->load_success = false;
   t->parent = running_thread ();
   t->waited_on = false;
+  t->exec_file = NULL;
 #endif
 
   old_level = intr_disable ();

@@ -192,8 +192,7 @@ process_exit (void)
         }
     }
 
-  /* Nothing special needed for the running executable (Tasks 1–2 only). */
-  /* NEW Lab 2 Q5: Allow writes to the executable before exiting. */
+  /* Allow writes to the executable before exiting. */
   if (cur->exec_file != NULL)
     {
       file_allow_write (cur->exec_file);
@@ -201,7 +200,7 @@ process_exit (void)
       cur->exec_file = NULL;
     }
   
-  /* Signal parent that we have exited */
+  /* Signal parent that we have exited. */
   sema_up (&cur->wait_sema);
   
   /* Wait for parent to retrieve exit status before we can be freed.
@@ -347,9 +346,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
-  // NEW Lab 2 Q5: Deny writes to the executable while it is running 
+  /* Deny writes to the executable while it is running. */
   file_deny_write (file);
-  t->exec_file = file;
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -427,18 +425,22 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (!setup_stack (esp, file_name))
     goto done;
 
-
-  /* Only assign exec_file if load succeeded. */
-  success = true;
-  
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
+  success = true;
 
  done:
-  // NEW Lab 2 Q5: Close only if load failed, keep open otherwise
+  /* Close file only if load failed, keep open otherwise. */
   if (!success && file != NULL)
-    file_close (file);
+    {
+      file_close (file);
+    }
+  else if (success)
+    {
+      /* Load succeeded, keep file open and deny writes. */
+      t->exec_file = file;
+    }
   return success;
 }
 

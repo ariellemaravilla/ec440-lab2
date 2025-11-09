@@ -8,9 +8,9 @@
 
 >> Fill in the names and email addresses of your group members.
 
+Leo Phung <leophung@bu.edu>
+Venessa Maduka <vemaduka@bu.edu>
 Arielle Maravilla <amaravil@bu.edu>
-Leo Phung <leophung@domain.example>
-FirstName LastName <email@domain.example>
 
 ---- PRELIMINARIES ----
 
@@ -21,8 +21,8 @@ FirstName LastName <email@domain.example>
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
 
-			   ARGUMENT PASSING
-			   ================
+		   ARGUMENT PASSING
+		   ================
 
 ---- DATA STRUCTURES ----
 
@@ -30,22 +30,56 @@ FirstName LastName <email@domain.example>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+In threads/thread.h (per-process state used):
+- struct file *fd_table[128];  // Per-process open files by fd.
+- int next_fd;                  // Next fd to hand out (starts at 2).
+- int exit_status;              // Child’s exit code for wait().
+- struct list children;         // My child processes.
+- struct list_elem child_elem;  // Link to parent’s children list.
+- struct semaphore wait_sema;   // Parent blocks here in wait().
+- struct semaphore load_sema;   // Parent blocks here in exec().
+- struct semaphore dead_sema;   // Keeps child around until parent collects.
+- struct thread *parent;        // Pointer to parent process.
+- bool waited_on;               // Prevents double wait.
+- struct file *exec_file;       // Open executable to deny writes while running.
+
+In userprog/syscall.c:
+- static struct lock filesys_lock; // Global FS lock so file syscalls are atomic.
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe how you implemented argument parsing.  How do
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
 
+I parse the command line with strtok_r() to split on spaces. I stash each
+arg into a temporary array so I can push them onto the user stack in reverse
+order (so argv[0] ends up first). After that I basically do 4-byte alignment
+(pad with zeros until esp % 4 == 0), push a NULL, then push the addresses of
+each arg (again backwards), then argv, argc, and a fake return address. To
+make sure I don’t blow past the first stack page, I check esp as I go and if
+it would cross the page boundary I just fail the load.
+
 ---- RATIONALE ----
 
 >> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+strtok() keeps its state in a static/global place, which would get clobbered
+if more than one thread parses at the same time. strtok_r() keeps the state
+in a save pointer you pass in, so it’s thread-safe and doesn’t step on other
+threads.
 
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
 
-			     SYSTEM CALLS
-			     ============
+- It keeps the kernel simpler and safer; parsing stays in user space.
+- The shell can do nicer features (globbing, env vars, quoting, pipes) before
+ 	programs get a clean argv and the kernel doesn’t have to do fancy
+ 	string parsing.
+
+		     SYSTEM CALLS
+		     ============
 
 ---- DATA STRUCTURES ----
 
@@ -53,52 +87,36 @@ FirstName LastName <email@domain.example>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-parent: track parent and child relationships for wait/exit ops
-children: parent’s list of live children 
-exec_sema: blocks parent in exec() until child finishes load()
-wait_sema: lets parent sleep in wait() until child exits
-load_success: pass load status from child to parent
-waited: ensure wait() only once per child
-exit_status: child’s status line for wait()
-fd_table[128]: per-proc descriptors → struct file*
-child_elem: list linkage in parent’s children
-global:
-filesys_lock: protects filesys_*/file_* from races
+- fd_table, next_fd: track per-process file descriptors.
+- exit_status, children, child_elem: return child status to parent.
+- wait_sema, load_sema, dead_sema: sync for wait()/exec()/teardown.
+- parent, waited_on: parent/child relationship and single-wait rule.
+- exec_file: keep program file open and deny writes while running.
+- filesys_lock (global): serialize file syscalls across processes.
 
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
-each process gets its own fd_table. allocate_fd() is then able to return the first free
-slot that is greater than or equal 2. get_file() then idnexes into the current thread's tab;e. 
-The FDs are then unique per process and not systemwide. However, when there is a process with
-the same number, it can refer to different files in different processes. The number can
-be reused after close()
-
-
+Each process has fd_table[128]. When I open a file, I put its struct file 
+into the next free slot (starting at 2) and return that index as the fd.
+FDs are per-process, not global. Two different processes can both have fd 3
+and that’s fine.
 
 ---- ALGORITHMS ----
 
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
 
-pointer_validation: validate_uaddr() checks each byte is user space and mapped via pagedir_get_page().
-validate_uaddr_range() go through the range by byte.
+I validate every user pointer before touching it. I use a get_user()
+helper (inline asm) that safely probes a byte; if it page-faults, the
+exception path makes it return -1. validate_pointer() checks that the
+pointer is non-null, user-space, and readable. validate_buffer() walks
+the whole buffer, and validate_string() walks until the null byte.
 
-safe copies: 
--> copy_in(dst, usrc, n): kernel <- user validates each byte
--> copy_out(udst, src, n): user <- kernel validates each dest byte
-
-read():
---> fd==0 -> pull bytes from input_getc() into the kernel buffer, then copy_out() to the user
---> file case -> chunked reads (<4096) under filesys_lock into a kernel buffer, then copy_out to user
-
-write(): 
---> fd==1 -> putbuf() straight to console
---> file case -> copy_in() from user into the kernel buffer, then it will chink file_write() under 
-filesys_lock
-
-this is able to keep the kernel from touch raw usr pointers inside the filesystem layer
+For read/write, I also special-case fd 0/1 (stdin/stdout). For files, I
+grab filesys_lock, do the I/O on the file *, then unlock. I don’t try to
+touch user memory after a validation fails; I just exit(-1).
 
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
@@ -107,18 +125,20 @@ this is able to keep the kernel from touch raw usr pointers inside the filesyste
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
-4096B: min = max = 4096 (byte-wise today)
-2B: min = max = 2
-
---> improve by per-page validation -> 1-2 checks for 4KB; 1 (or 2 if straddle) for 2B
-~4096x fewer in the best case
+ I check each byte, so worst case it’s 4096 inspections for a
+4 KB buffer, and 2 inspections for 2 bytes. Theoretically you can optimize
+by checking per-page (first/last byte per page) and cut it down a lot, but
+I kept it simple for the lab.
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
 
-wait: verify child & not waited, remove from list, sema_down(wait_sema), return exit_status() 
-
-process_exit: print line, close FDs, sema_up(wait_sema), destroy pagedir 
+Parent calls wait(pid): I find the child in my children list, ensure we
+haven’t waited already, mark it waited_on, then sema_down() on child’s
+wait_sema. In process_exit(), the child sets exit_status and sema_up()s
+wait_sema. After the parent wakes, it grabs the status, removes the child
+from its list, and sema_up()s the child's dead_sema so the child can finish
+freeing itself.
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -134,17 +154,14 @@ process_exit: print line, close FDs, sema_up(wait_sema), destroy pagedir
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
-* Centralize all raw user-pointer touching in small helpers: validate_uaddr*, copy_in, copy_out, get_u32, get_string
-* on any bad pointer, call sys_exit(-1) this sets exit_status and thread_exit(), the syscall bodies stay
-readable and no need for deep nesting 
-*wrap filesystem calls with filesys_lock and use kernel buffers for I/O so ner need to pass user pointers into lower layers
-*for chunked I/O allocations, these are free per-chunk -> short reads/writes or failures, break and return
-what we safely transferred 
-
-Example: sys_write(fd, buf, size)
---> validate_uaddr_range(buf,size), loop: kernel_buf=malloc(chunk), copy_in(), file_write() under lock, 
-free(kernel_buf). Any invalid pointer triggers sys_exit(-1) immediately, any partial I/O returns bytes
-written, no leaked locks or buffers
+I front-load validation to keep the main logic readable. In the syscall
+handler, I first validate the stack pointer and all 4 bytes of each 32-bit
+argument (this fixed the boundary tests). For buffers/strings I validate
+the whole region. If anything fails, syscall_exit(-1) terminates the
+process early, before taking locks or allocating anything. Example:
+write(fd, buf, size) — I validate esp, then fd/buf/size (all 4 bytes each),
+then [buf .. buf+size). Only after that do I take filesys_lock, do the
+write, and release it.
 
 ---- SYNCHRONIZATION ----
 
@@ -153,14 +170,10 @@ written, no leaked locks or buffers
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
 
-* parent calls process_execute() -> gets tid
-* finds the child thread and sema_down(&child->exec_sema)
-* in child start_process()
- -> load(), set t->load_success, optionally build the argv stack 
- -> sema_up(&t->exec_sema) after finishing load attempt
-* parent resumes, checks child->load_process and returns new PID or -1
-
-Return from exec() happens after child finishes load(). status will be passed via child's bool_load_success
+After thread_create(), the parent finds the child and sema_down()s on
+the child's load_sema. The child runs load(), sets the child's load_success, and
+sema_up()s load_sema. The parent wakes and returns -1 or the child tid
+based on load_success. So exec() doesn’t return too early.
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
@@ -169,39 +182,40 @@ Return from exec() happens after child finishes load(). status will be passed vi
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
-*P calls wait(c) before c exits:
--> P verifies direct child and not already waited, removes C from children, then sema_down(wait_sema)
--> C later returns process_exit() -> sema_up(wait_sema) unlocks P. P reads exit_status. FDs/pagedir closed
-by C; P holds no resources for C anymore 
+If P waits before C exits: P blocks on C’s wait_sema; C signals it in
+process_exit(). If P waits after C exits: C is already waiting to be
+collected; wait() returns immediately with the stored status.
 
-*P calls wait(c) after c already exited:
--> c's process_exit() already performed sema_up()
--> P calls wait(), finds C in children, sema_down() returns immediately, status will be returned -> no race conditions 
-
-*P terminates without waiting, before C exits
--> C will still close its FDs and free its own addr space in process_exit() 
-
-*P terminates after C exits without waiting:
--> child already free kernel resources --> no leaks. Waited mechanism prevents any later wait calls
-
-*special cases:
--> double wait: rejected via waited flag
--> Non-child TID : -1
--> exec() load fails : parent returns -1 b/c of exec_sema and load success
+If P terminates without waiting: in C’s process_exit() I check if the
+parent is gone; then C skips waiting on dead_sema and frees itself so we
+don’t leak. The main edge case I handled was preventing double-wait with
+the waited_on flag.
 
 ---- RATIONALE ----
 
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
+The safe-byte probe (get_user) plus validating up front kept the syscall
+code readable and avoided mixing lots of error paths with the main logic.
+It’s not the fastest, but it’s straightforward and it passed all the tests.
+
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
+
+Pros: simple array lookup, fast close-on-exit by scanning, per-process
+namespace matches Unix expectations. Cons: fixed cap (128), need to scan
+for the next free slot. For this lab, that trade-off was fine.
 
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
 
-			   SURVEY QUESTIONS
-			   ================
+I kept tid == pid. Since Pintos user programs are single-threaded here,
+it’s the simplest thing that works. If we added multiple threads per
+process later, I’d split them.
+
+		   SURVEY QUESTIONS
+		   ================
 
 Answering these questions is optional, but it will help us improve the
 course in future quarters.  Feel free to tell us anything you
@@ -223,3 +237,5 @@ the quarter.
 >> students, either for future quarters or the remaining projects?
 
 >> Any other comments?
+
+```
