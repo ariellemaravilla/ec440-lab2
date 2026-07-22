@@ -12,7 +12,7 @@ This lab extends the Pintos teaching operating system by adding support for user
 - Process synchronization
 - Protection against writes to running executables
 
-This repository contains my implementation for the lab assignment. The Pintos framework and starter code were provided by the course staff and Stanford's Pintos project. 
+This repository contains my implementation of Lab 2 for the course. The Pintos framework and starter code were provided by the course staff and Stanford's Pintos project. 
 
 ---
 
