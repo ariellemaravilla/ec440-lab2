@@ -1,3 +1,22 @@
+# EC440 Lab 2: User Programs (Pintos)
+
+Implementation of Lab 2 for Boston University's EC440: Introduction to Operating Systems.
+
+This lab extends the Pintos teaching operating system by adding support for user programs and core operating system functionality, including:
+
+- Process creation and execution
+- System call handling
+- Argument passing
+- User memory validation
+- File system system calls
+- Process synchronization
+- Protection against writes to running executables
+
+This repository contains my implementation for the lab assignment. The Pintos framework and starter code were provided by the course staff and Stanford's Pintos project. 
+
+---
+
+
 # Pintos
 Labs for undergraduate OS class (EC440) at Boston University. [Pintos](http://pintos-os.org) 
 is a teaching operating system for x86, challenging but not overwhelming, small
